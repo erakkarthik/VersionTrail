@@ -344,15 +344,15 @@ class MainWindow(QMainWindow):
         cc.setSpacing(4)
 
         # Mode selector
-        mode_lbl = QLabel("MONITOR MODE")
+        mode_lbl = QLabel("MONITOR")
         mode_lbl.setObjectName("sectionLabel")
         cc.addWidget(mode_lbl)
 
         mode_row = QHBoxLayout()
         mode_row.setSpacing(6)
         self.btn_file      = ModeButton("Single File")
-        self.btn_folder    = ModeButton("Folder (Shallow)")
-        self.btn_recursive = ModeButton("Folder (Recursive)")
+        self.btn_folder    = ModeButton("Folder")
+        self.btn_recursive = ModeButton("Folder + Sub Folder")
 
         self.scope_group = QButtonGroup(self)
         self.scope_group.setExclusive(True)
@@ -363,7 +363,7 @@ class MainWindow(QMainWindow):
         cc.addLayout(mode_row)
 
         # Source
-        self.src_lbl = QLabel("SOURCE")
+        self.src_lbl = QLabel("SOURCE (File/Folder)")
         self.src_lbl.setObjectName("sectionLabel")
         self.src_lbl.setContentsMargins(0, 4, 0, 0)
         cc.addWidget(self.src_lbl)
@@ -390,7 +390,7 @@ class MainWindow(QMainWindow):
         cc.addWidget(self.src_error)
 
         # Destination
-        self.dst_lbl = QLabel("DESTINATION")
+        self.dst_lbl = QLabel("BACKUP DESTINATION FOLDER")
         self.dst_lbl.setObjectName("sectionLabel")
         self.dst_lbl.setContentsMargins(0, 2, 0, 0)
         cc.addWidget(self.dst_lbl)
@@ -771,6 +771,12 @@ class MainWindow(QMainWindow):
             f"License: MIT License<br><br>"
             f"Real-time file backup utility with change detection,<br>"
             f"debounced saves, and system tray support."
+            f"<br><br>"
+            f"-------------------------------------------<br>"
+            f"Coder: ERAKKARTHIK<br>"
+            f"-------------------------------------------<br>"
+            f"Tester: ERAKKARTHIK, D11DMB"
+
         )
         QMessageBox.about(self, "About", text)
 
