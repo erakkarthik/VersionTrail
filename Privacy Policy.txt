@@ -1,0 +1,27 @@
+Privacy Policy – VersionTrail
+
+VersionTrail is a local file backup and version monitoring application.
+
+Data Collection
+
+VersionTrail does not collect, transmit, or share personal information.
+
+Local File Access
+
+The application only accesses files and folders explicitly selected by the user for monitoring and backup purposes.
+
+Data Storage
+
+All backups and logs are stored locally on the user’s device. No cloud storage or remote servers are used.
+
+Network Usage
+
+VersionTrail does not transmit files, usage data, or personal information over the internet.
+
+Third-Party Services
+
+VersionTrail does not use third-party analytics, advertising, or tracking services.
+
+User Control
+
+Users can start, stop, or remove monitoring at any time and may delete backup files manually.
