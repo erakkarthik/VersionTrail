@@ -1,21 +1,53 @@
 import os
+import json
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QButtonGroup, QFileDialog,
     QPlainTextEdit, QSystemTrayIcon, QMenu, QMessageBox, QStyle,
-    QFrame, QComboBox, QLabel, QAbstractButton
+    QFrame, QComboBox, QLabel, QAbstractButton,
+    QDialog, QListWidget, QListWidgetItem, QDialogButtonBox
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction, QFont, QShortcut, QKeySequence, QPainter, QColor, QPen
 
 from backend import MonitorWorker, setup_logging
+from translations import TRANSLATIONS, RTL_LANGUAGES, SCRIPT_FONTS
 
 
 APP_VERSION = "1.0.0"
-APP_NAME = "VersionTrail"
+APP_NAME    = "VersionTrail"
 
-# ── Palette ────────────────────────────────────────────────────
+# ── Config path (AppData) ──────────────────────────────────────────────────────
+_APPDATA    = os.environ.get("APPDATA", os.path.expanduser("~"))
+_CONFIG_DIR = os.path.join(_APPDATA, APP_NAME)
+CONFIG_PATH = os.path.join(_CONFIG_DIR, "config.json")
+
+SUPPORTED_LANGUAGES = list(TRANSLATIONS.keys())   # ["English", "Tamil", "Chinese", "Arabic"]
+
+
+def load_language() -> str:
+    """Read saved language from config.json; fall back to English."""
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        lang = data.get("language", "English")
+        return lang if lang in TRANSLATIONS else "English"
+    except Exception:
+        return "English"
+
+
+def save_language(language: str) -> None:
+    """Persist language selection to config.json in AppData."""
+    os.makedirs(_CONFIG_DIR, exist_ok=True)
+    try:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"language": language}, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+# ── Palette ────────────────────────────────────────────────────────────────────
 C_TEAL        = "#1D9E75"
 C_TEAL_DARK   = "#0F6E56"
 C_TEAL_BG     = "#E1F5EE"
@@ -40,9 +72,9 @@ FONT_UI   = "Segoe UI"
 FONT_MONO = "Consolas"
 
 
-# ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # CUSTOM MODE BUTTON  (card-style radio alternative)
-# ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 class ModeButton(QAbstractButton):
     """Checkable card button used for scope selection."""
 
@@ -81,9 +113,9 @@ class ModeButton(QAbstractButton):
         return QSize(120, 38)
 
 
-# ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # STATUS DOT
-# ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 class StatusDot(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -94,9 +126,126 @@ class StatusDot(QLabel):
         self.setStyleSheet(f"border-radius: 5px; background: {color};")
 
 
-# ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# LANGUAGE PICKER DIALOG
+# ──────────────────────────────────────────────────────────────────────────────
+class LanguageDialog(QDialog):
+    """Small dialog with a search box + list for choosing a language."""
+
+    def __init__(self, current_language: str, parent=None):
+        super().__init__(parent)
+        t = TRANSLATIONS.get(current_language, TRANSLATIONS["English"])
+
+        self.setWindowTitle(t["dlg_language_title"])
+        self.setFixedSize(320, 420)
+        self.selected_language = current_language
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        # Search box
+        self.search = QLineEdit()
+        self.search.setPlaceholderText(t["dlg_language_search"])
+        self.search.setStyleSheet(f"""
+            QLineEdit {{
+                background: {C_BG_SECONDARY};
+                border: 1px solid {C_BORDER_SOFT};
+                border-radius: 6px;
+                padding: 0 10px;
+                min-height: 32px;
+                font-size: 13px;
+                color: {C_TEXT_PRIMARY};
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {C_TEAL};
+            }}
+        """)
+        self.search.textChanged.connect(self._filter)
+        layout.addWidget(self.search)
+
+        # Language list
+        self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet(f"""
+            QListWidget {{
+                background: {C_BG_PRIMARY};
+                border: 1px solid {C_BORDER_SOFT};
+                border-radius: 8px;
+                font-size: 13px;
+                color: {C_TEXT_PRIMARY};
+                outline: none;
+            }}
+            QListWidget::item {{
+                padding: 8px 12px;
+                border-radius: 4px;
+            }}
+            QListWidget::item:selected {{
+                background: {C_TEAL_BG};
+                color: {C_TEAL_DARK};
+            }}
+            QListWidget::item:hover:!selected {{
+                background: {C_BG_SECONDARY};
+            }}
+        """)
+        self._populate(SUPPORTED_LANGUAGES, current_language)
+        self.list_widget.itemDoubleClicked.connect(self._accept)
+        layout.addWidget(self.list_widget)
+
+        # OK / Cancel
+        buttons = QDialogButtonBox()
+        self.ok_btn     = buttons.addButton(t["dlg_ok"],     QDialogButtonBox.ButtonRole.AcceptRole)
+        self.cancel_btn = buttons.addButton(t["dlg_cancel"], QDialogButtonBox.ButtonRole.RejectRole)
+        self.ok_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {C_TEAL};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 20px;
+                font-weight: 600;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{ background: {C_TEAL_DARK}; }}
+        """)
+        self.cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {C_BG_PRIMARY};
+                border: 1px solid {C_BORDER_MED};
+                border-radius: 6px;
+                padding: 6px 20px;
+                font-size: 13px;
+                color: {C_TEXT_PRIMARY};
+            }}
+            QPushButton:hover {{ background: {C_BG_SECONDARY}; }}
+        """)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _populate(self, languages: list, current: str):
+        self.list_widget.clear()
+        for lang in languages:
+            item = QListWidgetItem(lang)
+            self.list_widget.addItem(item)
+            if lang == current:
+                self.list_widget.setCurrentItem(item)
+
+    def _filter(self, text: str):
+        query = text.strip().lower()
+        filtered = [l for l in SUPPORTED_LANGUAGES if query in l.lower()]
+        current = self.selected_language
+        self._populate(filtered, current)
+
+    def _accept(self):
+        item = self.list_widget.currentItem()
+        if item:
+            self.selected_language = item.text()
+        self.accept()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # GLOBAL STYLESHEET
-# ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 GLOBAL_QSS = f"""
 QMainWindow, QWidget {{
     background: {C_BG_PRIMARY};
@@ -207,7 +356,7 @@ QPushButton#startBtn:disabled {{
     border: none;
 }}
 
-/* ── Secondary action: Stop — red when active, grey when disabled ── */
+/* ── Secondary action: Stop ── */
 QPushButton#stopBtn {{
     background: {C_RED_BG};
     color: {C_RED_TEXT};
@@ -304,31 +453,138 @@ QLabel#errorLabel {{
 """
 
 
-# ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # MAIN WINDOW
-# ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.resize(580, 560)
         self.setMinimumSize(520, 480)
-        self.worker = None
-        self.all_logs = []
-        self.log_filter = "All Events"
-        self._backup_count = 0
-        self._src_touched = False
-        self._bak_touched = False
-        self.logger = setup_logging()
+        self.worker          = None
+        self.all_logs        = []
+        self.log_filter      = "All Events"
+        self._backup_count   = 0
+        self._src_touched    = False
+        self._bak_touched    = False
+        self.logger          = setup_logging()
+        self.current_language = load_language()   # load BEFORE UI is built
 
         self.setStyleSheet(GLOBAL_QSS)
+        self._apply_direction(self.current_language)   # set RTL/LTR before widgets render
         self.setup_ui()
         self.setup_menu()
         self.setup_tray()
         self.setup_shortcuts()
         self.update_status("Idle")
+        self.apply_language(self.current_language)     # apply translated strings
 
-    # ── UI ────────────────────────────────────────────────────
+    # ── Direction helper ───────────────────────────────────────────────────────
+    def _apply_direction(self, language: str):
+        """Set app-wide layout direction only. Font is handled per-widget in apply_language."""
+        app = QApplication.instance()
+        if language in RTL_LANGUAGES:
+            app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        else:
+            app.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+
+    # ── Language application ───────────────────────────────────────────────────
+    def apply_language(self, language: str):
+        """Update every translatable string in the UI."""
+        t   = TRANSLATIONS.get(language, TRANSLATIONS["English"])
+        rtl = language in RTL_LANGUAGES
+        align_flag = Qt.AlignmentFlag.AlignRight if rtl else Qt.AlignmentFlag.AlignLeft
+
+        # Store FIRST so any method called below (e.g. update_status) can use self._t
+        self._t = t
+
+        # ── Script font: applied only to UI text widgets, NOT log pane ──
+        # This avoids OpenType warnings from Consolas/Segoe UI being asked to render
+        # non-Latin scripts. Log pane always keeps FONT_MONO.
+        ui_font_name = SCRIPT_FONTS.get(language, FONT_UI)
+        ui_font      = QFont(ui_font_name, 10)
+        ui_font_sm   = QFont(ui_font_name, 9)
+        ui_font_xs   = QFont(ui_font_name, 8)
+        for widget in [
+            self.mode_lbl, self.src_lbl, self.dst_lbl,
+            self.src_edit, self.bak_edit,
+            self.src_btn, self.bak_btn,
+            self.start_btn, self.stop_btn,
+            self.status_label, self.filter_label, self.filter_combo,
+            self.src_error, self.bak_error,
+        ]:
+            widget.setFont(ui_font)
+        for btn in [self.btn_file, self.btn_folder, self.btn_recursive]:
+            btn.setFont(ui_font_sm)
+        for pill_lbl in [
+            self.stat_files._label,   self.stat_files._value_label,
+            self.stat_folders._label, self.stat_folders._value_label,
+            self.stat_backups._label, self.stat_backups._value_label,
+        ]:
+            pill_lbl.setFont(ui_font_xs)
+
+        # ── Menu bar labels ──
+        self.menu_file.setTitle(t["menu_file"])
+        self.menu_language.setTitle(t["menu_language"])
+        self.menu_help.setTitle(t["menu_help"])
+        self.action_exit.setText(t["menu_exit"])
+        self.action_choose_language.setText(t["menu_choose_language"])
+        self.action_quick_start.setText(t["menu_quick_start"])
+        self.action_about.setText(t["menu_about"])
+        # Force menubar to repaint — PyQt6 doesn't always refresh on setTitle alone
+        self.menuBar().update()
+
+        # ── Mode buttons ──
+        self.btn_file.setText(t["btn_single_file"])
+        self.btn_folder.setText(t["btn_folder"])
+        self.btn_recursive.setText(t["btn_folder_recursive"])
+        # Force custom-painted buttons to redraw
+        for btn in [self.btn_file, self.btn_folder, self.btn_recursive]:
+            btn.update()
+
+        # ── Section labels ──
+        self.mode_lbl.setText(t["section_monitor"])
+        self.src_lbl.setText(t["section_source"])
+        self.dst_lbl.setText(t["section_destination"])
+
+        # ── Path inputs & browse buttons ──
+        self.src_edit.setPlaceholderText(t["placeholder_source"])
+        self.src_edit.setAlignment(align_flag)
+        self.bak_edit.setPlaceholderText(t["placeholder_destination"])
+        self.bak_edit.setAlignment(align_flag)
+        self.src_btn.setText(t["btn_browse"])
+        self.bak_btn.setText(t["btn_browse"])
+
+        # ── Action buttons ──
+        self.start_btn.setText(t["btn_start"])
+        self.stop_btn.setText(t["btn_stop"])
+
+        # ── Filter combo ──
+        self.filter_label.setText(t["filter_label"])
+        self.filter_combo.blockSignals(True)
+        self.filter_combo.clear()
+        self.filter_combo.addItems([t["filter_all"], t["filter_changes"], t["filter_errors"]])
+        self.filter_combo.blockSignals(False)
+
+        # ── Stat pills ──
+        self.stat_files._label.setText(t["stat_files"])
+        self.stat_folders._label.setText(t["stat_folders"])
+        self.stat_backups._label.setText(t["stat_backups"])
+
+        # ── Log pane: direction only, font stays FONT_MONO ──
+        log_dir = Qt.LayoutDirection.RightToLeft if rtl else Qt.LayoutDirection.LeftToRight
+        self.log_text.setLayoutDirection(log_dir)
+        self.log_text.setPlaceholderText(t["log_placeholder"])
+
+        # ── Status bar ──
+        self.update_status(self._current_status_state)
+
+        # ── Tray menu ──
+        self.tray_show_action.setText(t["tray_show"])
+        self.tray_exit_action.setText(t["tray_exit"])
+
+    # ── UI ─────────────────────────────────────────────────────────────────────
     def setup_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -336,7 +592,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(14, 10, 14, 14)
         root.setSpacing(8)
 
-        # ── Config card ──────────────────────────────────────
+        # ── Config card ──────────────────────────────────────────────────────
         config_card = QFrame()
         config_card.setObjectName("configCard")
         cc = QVBoxLayout(config_card)
@@ -344,9 +600,9 @@ class MainWindow(QMainWindow):
         cc.setSpacing(4)
 
         # Mode selector
-        mode_lbl = QLabel("MONITOR")
-        mode_lbl.setObjectName("sectionLabel")
-        cc.addWidget(mode_lbl)
+        self.mode_lbl = QLabel("MONITOR")
+        self.mode_lbl.setObjectName("sectionLabel")
+        cc.addWidget(self.mode_lbl)
 
         mode_row = QHBoxLayout()
         mode_row.setSpacing(6)
@@ -416,7 +672,7 @@ class MainWindow(QMainWindow):
         self.bak_error.setFixedHeight(14)
         cc.addWidget(self.bak_error)
 
-        # Action buttons (no separator — tighter)
+        # Action buttons
         act_row = QHBoxLayout()
         act_row.setContentsMargins(0, 4, 0, 0)
         act_row.addStretch()
@@ -441,7 +697,7 @@ class MainWindow(QMainWindow):
 
         root.addWidget(config_card)
 
-        # ── Status + stats bar ────────────────────────────────
+        # ── Status + stats bar ────────────────────────────────────────────────
         status_bar = QFrame()
         status_bar.setObjectName("statusBar")
         sb_layout = QVBoxLayout(status_bar)
@@ -452,7 +708,7 @@ class MainWindow(QMainWindow):
         sb_row = QHBoxLayout()
         sb_row.setSpacing(8)
 
-        self.status_dot = StatusDot()
+        self.status_dot   = StatusDot()
         self.status_label = QLabel("Idle")
         self.status_label.setFont(QFont(FONT_UI, 9))
         self.status_label.setStyleSheet(f"color: {C_TEXT_MUTED}; background: transparent; border: none;")
@@ -460,12 +716,12 @@ class MainWindow(QMainWindow):
         sb_row.addWidget(self.status_label)
         sb_row.addStretch()
 
-        filter_lbl = QLabel("Filter:")
-        filter_lbl.setStyleSheet(f"color: {C_TEXT_MUTED}; font-size: 12px; background: transparent; border: none;")
+        self.filter_label = QLabel("Filter:")
+        self.filter_label.setStyleSheet(f"color: {C_TEXT_MUTED}; font-size: 12px; background: transparent; border: none;")
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(["All Events", "Changes Only", "Errors Only"])
         self.filter_combo.currentTextChanged.connect(self.apply_log_filter)
-        sb_row.addWidget(filter_lbl)
+        sb_row.addWidget(self.filter_label)
         sb_row.addWidget(self.filter_combo)
         sb_layout.addLayout(sb_row)
 
@@ -473,7 +729,7 @@ class MainWindow(QMainWindow):
         stats_row = QHBoxLayout()
         stats_row.setSpacing(8)
 
-        self.stat_files = self._make_stat_pill("📄 Files monitored", "0")
+        self.stat_files   = self._make_stat_pill("📄 Files monitored", "0")
         self.stat_folders = self._make_stat_pill("📁 Folders", "0")
         self.stat_backups = self._make_stat_pill("💾 Backups made", "0")
 
@@ -484,7 +740,7 @@ class MainWindow(QMainWindow):
 
         root.addWidget(status_bar)
 
-        # ── Log card ─────────────────────────────────────────
+        # ── Log card ──────────────────────────────────────────────────────────
         log_card = QFrame()
         log_card.setObjectName("logCard")
         lc = QVBoxLayout(log_card)
@@ -507,6 +763,9 @@ class MainWindow(QMainWindow):
         # Hide source/dest until a mode is chosen
         self._set_paths_visible(False)
 
+        # Track current status state for re-translation
+        self._current_status_state = "Idle"
+
     def _set_paths_visible(self, visible: bool):
         for w in [self.src_lbl, self.src_row_widget, self.src_error,
                   self.dst_lbl, self.bak_row_widget, self.bak_error,
@@ -521,7 +780,7 @@ class MainWindow(QMainWindow):
         """Small label+value pill for the stats row."""
         pill = QFrame()
         pill.setObjectName("statPill")
-        row = QHBoxLayout(pill)
+        row  = QHBoxLayout(pill)
         row.setContentsMargins(8, 3, 10, 3)
         row.setSpacing(6)
         lbl = QLabel(label)
@@ -530,21 +789,21 @@ class MainWindow(QMainWindow):
         val.setObjectName("statPillValue")
         row.addWidget(lbl)
         row.addWidget(val)
+        pill._label       = lbl    # exposed for apply_language
         pill._value_label = val
         return pill
 
     def _update_stats(self):
         """Recount monitored files/folders from the source path."""
-        src = self.src_edit.text().strip()
+        src   = self.src_edit.text().strip()
         scope = self._scope()
         files, folders, backups = 0, 0, self._backup_count
 
         if src and os.path.exists(src) and self.worker and self.worker.isRunning():
             if scope == "file":
-                files = 1
+                files   = 1
                 folders = 0
             elif scope == "folder":
-                # shallow: only immediate files are watched, no subfolders
                 try:
                     for e in os.scandir(src):
                         if e.is_file():
@@ -555,7 +814,7 @@ class MainWindow(QMainWindow):
             elif scope == "recursive":
                 try:
                     for _, dirs, fls in os.walk(src):
-                        files += len(fls)
+                        files   += len(fls)
                         folders += len(dirs)
                 except Exception:
                     pass
@@ -564,25 +823,50 @@ class MainWindow(QMainWindow):
         self.stat_folders._value_label.setText(str(folders))
         self.stat_backups._value_label.setText(str(backups))
 
-    # ── Menu bar ──────────────────────────────────────────────
+    # ── Menu bar ───────────────────────────────────────────────────────────────
     def setup_menu(self):
         menubar = self.menuBar()
 
-        file_menu = menubar.addMenu("File")
-        exit_action = QAction("Exit Completely", self)
-        exit_action.setShortcut("Ctrl+Q")
-        exit_action.triggered.connect(self.force_exit)
-        file_menu.addAction(exit_action)
+        # File
+        self.menu_file    = menubar.addMenu("File")
+        self.action_exit  = QAction("Exit Completely", self)
+        self.action_exit.setShortcut("Ctrl+Q")
+        self.action_exit.triggered.connect(self.force_exit)
+        self.menu_file.addAction(self.action_exit)
 
-        help_menu = menubar.addMenu("Help")
-        quick_start = QAction("Quick Start Guide", self)
-        quick_start.triggered.connect(self.show_quick_start)
-        help_menu.addAction(quick_start)
-        about_action = QAction("About", self)
-        about_action.triggered.connect(self.show_about)
-        help_menu.addAction(about_action)
+        # Language  ← NEW: inserted between File and Help
+        self.menu_language           = menubar.addMenu("Language")
+        self.action_choose_language  = QAction("Choose Language…", self)
+        self.action_choose_language.triggered.connect(self.show_language_dialog)
+        self.menu_language.addAction(self.action_choose_language)
 
-    # ── System tray ───────────────────────────────────────────
+        # Help
+        self.menu_help         = menubar.addMenu("Help")
+        self.action_quick_start = QAction("Quick Start Guide", self)
+        self.action_quick_start.triggered.connect(self.show_quick_start)
+        self.menu_help.addAction(self.action_quick_start)
+        self.action_about = QAction("About", self)
+        self.action_about.triggered.connect(self.show_about)
+        self.menu_help.addAction(self.action_about)
+
+    # ── Language dialog ────────────────────────────────────────────────────────
+    def show_language_dialog(self):
+        dlg = LanguageDialog(self.current_language, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            chosen = dlg.selected_language
+            if chosen and chosen != self.current_language:
+                self.current_language = chosen
+                save_language(chosen)
+                self._apply_direction(chosen)
+                self.apply_language(chosen)
+                t = self._t
+                QMessageBox.information(
+                    self,
+                    t["menu_language"],
+                    t["msg_language_changed"].format(lang=chosen)
+                )
+
+    # ── System tray ────────────────────────────────────────────────────────────
     def setup_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
@@ -590,13 +874,13 @@ class MainWindow(QMainWindow):
         self.tray_icon.show()
 
         tray_menu = QMenu()
-        show_action = QAction("Show Window", self)
-        show_action.triggered.connect(self.show_normal)
-        tray_menu.addAction(show_action)
+        self.tray_show_action = QAction("Show Window", self)
+        self.tray_show_action.triggered.connect(self.show_normal)
+        tray_menu.addAction(self.tray_show_action)
         tray_menu.addSeparator()
-        exit_tray = QAction("Exit Completely", self)
-        exit_tray.triggered.connect(self.force_exit)
-        tray_menu.addAction(exit_tray)
+        self.tray_exit_action = QAction("Exit Completely", self)
+        self.tray_exit_action.triggered.connect(self.force_exit)
+        tray_menu.addAction(self.tray_exit_action)
 
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.activated.connect(self.tray_activated)
@@ -617,31 +901,36 @@ class MainWindow(QMainWindow):
         self.tray_icon.hide()
         QApplication.quit()
 
-    # ── Shortcuts ─────────────────────────────────────────────
+    # ── Shortcuts ──────────────────────────────────────────────────────────────
     def setup_shortcuts(self):
         QShortcut(QKeySequence("Alt+S"), self, self.start_monitor)
         QShortcut(QKeySequence("Alt+O"), self, self.stop_monitor)
 
-    # ── Status ────────────────────────────────────────────────
+    # ── Status ─────────────────────────────────────────────────────────────────
     def update_status(self, state: str):
+        self._current_status_state = state
+        t = getattr(self, "_t", TRANSLATIONS["English"])
+
         dot_colors = {"Idle": C_DOT_IDLE, "Running": C_DOT_RUN, "Error": C_DOT_ERR}
         self.status_dot.set_color(dot_colors.get(state, C_DOT_IDLE))
-        self.status_label.setText(
-            {"Idle": "Idle — waiting to start", "Running": "Running", "Stopped": "Idle — monitor stopped"}.get(state, state)
-        )
+
+        text_map = {
+            "Idle":    t["status_idle"],
+            "Running": t["status_running"],
+            "Stopped": t["status_stopped"],
+        }
+        self.status_label.setText(text_map.get(state, state))
         self.tray_icon.setToolTip(f"{APP_NAME} - {state}")
 
-    # ── Validation ────────────────────────────────────────────
+    # ── Validation ─────────────────────────────────────────────────────────────
     def _scope(self) -> str:
-        if self.btn_file.isChecked():
-            return "file"
-        if self.btn_recursive.isChecked():
-            return "recursive"
-        if self.btn_folder.isChecked():
-            return "folder"
-        return ""  # nothing selected yet
+        if self.btn_file.isChecked():      return "file"
+        if self.btn_recursive.isChecked(): return "recursive"
+        if self.btn_folder.isChecked():    return "folder"
+        return ""
 
     def validate_inputs(self):
+        t     = getattr(self, "_t", TRANSLATIONS["English"])
         src   = self.src_edit.text().strip()
         bak   = self.bak_edit.text().strip()
         scope = self._scope()
@@ -655,35 +944,35 @@ class MainWindow(QMainWindow):
 
         if not src:
             if self._src_touched:
-                self.src_error.setText("Please select a source.")
+                self.src_error.setText(t["error_select_source"])
             valid = False
         elif not os.path.exists(src):
-            self.src_error.setText("Source path does not exist.")
+            self.src_error.setText(t["error_source_not_exist"])
             valid = False
         elif scope not in ("file", "") and not os.path.isdir(src):
-            self.src_error.setText("Source must be a folder for this mode.")
+            self.src_error.setText(t["error_source_must_folder"])
             valid = False
         elif scope == "file" and not os.path.isfile(src):
-            self.src_error.setText("Source must be a file.")
+            self.src_error.setText(t["error_source_must_file"])
             valid = False
 
         if not bak:
             if self._bak_touched:
-                self.bak_error.setText("Please select a destination.")
+                self.bak_error.setText(t["error_select_destination"])
             valid = False
         elif not os.path.isdir(bak):
-            self.bak_error.setText("Destination must be an existing folder.")
+            self.bak_error.setText(t["error_dest_not_folder"])
             valid = False
         elif src and os.path.abspath(src) == os.path.abspath(bak):
-            self.bak_error.setText("Source and destination cannot be the same.")
+            self.bak_error.setText(t["error_same_path"])
             valid = False
         elif scope == "recursive" and src and os.path.abspath(bak).startswith(os.path.abspath(src) + os.sep):
-            self.bak_error.setText("Destination cannot be inside source (infinite loop risk).")
+            self.bak_error.setText(t["error_dest_inside_source"])
             valid = False
 
         self.start_btn.setEnabled(valid)
 
-    # ── File dialogs ──────────────────────────────────────────
+    # ── File dialogs ───────────────────────────────────────────────────────────
     def browse_source(self):
         if self.btn_file.isChecked():
             path, _ = QFileDialog.getOpenFileName(self, "Select File")
@@ -699,7 +988,7 @@ class MainWindow(QMainWindow):
             self._bak_touched = True
             self.bak_edit.setText(path)
 
-    # ── Monitor control ───────────────────────────────────────
+    # ── Monitor control ────────────────────────────────────────────────────────
     def start_monitor(self):
         src = self.src_edit.text().strip()
         bak = self.bak_edit.text().strip()
@@ -729,7 +1018,7 @@ class MainWindow(QMainWindow):
         self._update_stats()
         self.update_status("Idle")
 
-    # ── Logging ───────────────────────────────────────────────
+    # ── Logging ────────────────────────────────────────────────────────────────
     def append_log(self, msg: str):
         self.all_logs.append(msg)
         if "[INFO] Backed up:" in msg:
@@ -738,55 +1027,46 @@ class MainWindow(QMainWindow):
         self.apply_log_filter()
 
     def apply_log_filter(self):
+        t = getattr(self, "_t", TRANSLATIONS["English"])
         self.log_filter = self.filter_combo.currentText()
         self.log_text.clear()
         for log in self.all_logs:
-            if self.log_filter == "All Events":
+            if self.log_filter == t["filter_all"]:
                 self.log_text.appendPlainText(log)
-            elif self.log_filter == "Changes Only" and "[INFO] Backed up:" in log:
+            elif self.log_filter == t["filter_changes"] and "[INFO] Backed up:" in log:
                 self.log_text.appendPlainText(log)
-            elif self.log_filter == "Errors Only" and ("[WARN]" in log or "[ERROR]" in log):
+            elif self.log_filter == t["filter_errors"] and ("[WARN]" in log or "[ERROR]" in log):
                 self.log_text.appendPlainText(log)
         self.log_text.verticalScrollBar().setValue(self.log_text.verticalScrollBar().maximum())
 
-    # ── Dialogs ───────────────────────────────────────────────
+    # ── Dialogs ────────────────────────────────────────────────────────────────
     def show_quick_start(self):
-        text = (
-            f"<b>Quick Start Guide</b><br><br>"
-            f"1. <b>Select Source:</b> Choose a file or folder to monitor.<br>"
-            f"2. <b>Select Destination:</b> Choose where backups will be saved.<br>"
-            f"3. <b>Choose Mode:</b><br>"
-            f"&nbsp;&nbsp;• Single File: Tracks one file.<br>"
-            f"&nbsp;&nbsp;• Folder (Shallow): Tracks immediate contents only.<br>"
-            f"&nbsp;&nbsp;• Folder (Recursive): Tracks folder + all subfolders.<br>"
-            f"4. <b>Start Monitor:</b> Begins real-time backup on save.<br><br>"
-            f"<i>Logs show every change. Use the filter dropdown to focus on errors or backups.</i>"
-        )
-        QMessageBox.information(self, "Quick Start", text)
+        t = getattr(self, "_t", TRANSLATIONS["English"])
+        QMessageBox.information(self, t["quick_start_title"], t["quick_start_text"])
 
     def show_about(self):
+        t = getattr(self, "_t", TRANSLATIONS["English"])
         text = (
             f"<b>{APP_NAME}</b><br>"
             f"Version: {APP_VERSION}<br>"
             f"License: MIT License<br><br>"
-            f"Real-time file backup utility with change detection,<br>"
-            f"debounced saves, and system tray support."
+            f"{t['about_description']}"
             f"<br><br>"
             f"-------------------------------------------<br>"
             f"Coder: ERAKKARTHIK<br>"
             f"-------------------------------------------<br>"
             f"Tester: ERAKKARTHIK, D11DMB"
-
         )
-        QMessageBox.about(self, "About", text)
+        QMessageBox.about(self, t["about_title"], text)
 
-    # ── Window close → tray ───────────────────────────────────
+    # ── Window close → tray ────────────────────────────────────────────────────
     def closeEvent(self, event):
+        t = getattr(self, "_t", TRANSLATIONS["English"])
         event.ignore()
         self.hide()
         self.tray_icon.showMessage(
-            "Running",
-            "App minimized to system tray.",
+            t["tray_minimized_title"],
+            t["tray_minimized_body"],
             QSystemTrayIcon.MessageIcon.Information,
             2000,
         )
