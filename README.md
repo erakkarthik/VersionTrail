@@ -3,3 +3,4 @@ VersionTrail is a lightweight file versioning and backup tool that automatically
 
 How to run:
 python main.py
+
